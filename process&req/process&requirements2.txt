@@ -1,0 +1,533 @@
+5.6 Get Single Message (app/api/emails/[accountId]/messages/[messageId]/route.ts)
+import { NextRequest, NextResponse } from 'next/server'
+import { supabase } from '@/lib/supabase'
+import { nylas } from '@/lib/nylas'
+
+export async function GET(
+  request: NextRequest,
+  { params }: { params: { accountId: string; messageId: string } }
+) {
+  try {
+    const { data: account, error } = await supabase
+      .from('email_accounts')
+      .select('grant_id')
+      .eq('id', params.accountId)
+      .single()
+
+    if (error) throw error
+
+    const message = await nylas.messages.find({
+      identifier: account.grant_id,
+      messageId: params.messageId
+    })
+
+    // Get custom labels for this message
+    const { data: customLabels } = await supabase
+      .from('message_custom_labels')
+      .select(`
+        custom_labels (
+          id,
+          name,
+          color
+        )
+      `)
+      .eq('email_account_id', params.accountId)
+      .eq('message_id', params.messageId)
+
+    return NextResponse.json({ 
+      message: {
+        ...message.data,
+        custom_labels: customLabels?.map(l => l.custom_labels) || []
+      }
+    })
+  } catch (error) {
+    console.error('Error fetching message:', error)
+    return NextResponse.json(
+      { error: 'Failed to fetch message' },
+      { status: 500 }
+    )
+  }
+}
+
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: { accountId: string; messageId: string } }
+) {
+  try {
+    const body = await request.json()
+    const { unread, starred, folders } = body
+
+    const { data: account } = await supabase
+      .from('email_accounts')
+      .select('grant_id')
+      .eq('id', params.accountId)
+      .single()
+
+    const requestBody: any = {}
+    if (unread !== undefined) requestBody.unread = unread
+    if (starred !== undefined) requestBody.starred = starred
+    if (folders) requestBody.folders = folders
+
+    const updatedMessage = await nylas.messages.update({
+      identifier: account.grant_id,
+      messageId: params.messageId,
+      requestBody
+    })
+
+    return NextResponse.json({ message: updatedMessage })
+  } catch (error) {
+    console.error('Error updating message:', error)
+    return NextResponse.json(
+      { error: 'Failed to update message' },
+      { status: 500 }
+    )
+  }
+}
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: { accountId: string; messageId: string } }
+) {
+  try {
+    const { data: account } = await supabase
+      .from('email_accounts')
+      .select('grant_id')
+      .eq('id', params.accountId)
+      .single()
+
+    await nylas.messages.destroy({
+      identifier: account.grant_id,
+      messageId: params.messageId
+    })
+
+    return NextResponse.json({ success: true, message: 'Email deleted' })
+  } catch (error) {
+    console.error('Error deleting message:', error)
+    return NextResponse.json(
+      { error: 'Failed to delete message' },
+      { status: 500 }
+    )
+  }
+}5.7 Custom Label Management for Messages (app/api/emails/[accountId]/messages/[messageId]/labels/route.ts)
+typescriptimport { NextRequest, NextResponse } from 'next/server'
+import { supabase } from '@/lib/supabase'
+
+// Get custom labels for a message
+export async function GET(
+  request: NextRequest,
+  { params }: { params: { accountId: string; messageId: string } }
+) {
+  try {
+    const { data, error } = await supabase
+      .from('message_custom_labels')
+      .select(`
+        custom_labels (
+          id,
+          name,
+          color,
+          sort_order
+        )
+      `)
+      .eq('email_account_id', params.accountId)
+      .eq('message_id', params.messageId)
+      .order('custom_labels(sort_order)')
+
+    if (error) throw error
+
+    const labels = data?.map(item => item.custom_labels) || []
+
+    return NextResponse.json({ labels })
+  } catch (error) {
+    console.error('Error fetching message labels:', error)
+    return NextResponse.json(
+      { error: 'Failed to fetch labels' },
+      { status: 500 }
+    )
+  }
+}
+
+// Add custom labels to a message
+export async function POST(
+  request: NextRequest,
+  { params }: { params: { accountId: string; messageId: string } }
+) {
+  try {
+    const { label_ids, userId } = await request.json()
+
+    if (!Array.isArray(label_ids) || label_ids.length === 0) {
+      return NextResponse.json(
+        { error: 'label_ids must be a non-empty array' },
+        { status: 400 }
+      )
+    }
+
+    // Prepare data for insertion
+    const labelsToInsert = label_ids.map(labelId => ({
+      email_account_id: params.accountId,
+      message_id: params.messageId,
+      custom_label_id: labelId,
+      applied_by: userId
+    }))
+
+    const { data, error } = await supabase
+      .from('message_custom_labels')
+      .upsert(labelsToInsert, {
+        onConflict: 'email_account_id,message_id,custom_label_id',
+        ignoreDuplicates: false
+      })
+      .select(`
+        custom_labels (
+          id,
+          name,
+          color
+        )
+      `)
+
+    if (error) throw error
+
+    return NextResponse.json({ 
+      success: true, 
+      labels: data?.map(item => item.custom_labels) || [],
+      message: 'Labels applied successfully'
+    })
+  } catch (error) {
+    console.error('Error applying custom labels:', error)
+    return NextResponse.json(
+      { error: 'Failed to apply labels' },
+      { status: 500 }
+    )
+  }
+}
+
+// Remove all custom labels from a message
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: { accountId: string; messageId: string } }
+) {
+  try {
+    const { searchParams } = new URL(request.url)
+    const labelId = searchParams.get('labelId')
+
+    if (labelId) {
+      // Remove specific label
+      await supabase
+        .from('message_custom_labels')
+        .delete()
+        .eq('email_account_id', params.accountId)
+        .eq('message_id', params.messageId)
+        .eq('custom_label_id', labelId)
+    } else {
+      // Remove all labels
+      await supabase
+        .from('message_custom_labels')
+        .delete()
+        .eq('email_account_id', params.accountId)
+        .eq('message_id', params.messageId)
+    }
+
+    return NextResponse.json({ success: true, message: 'Labels removed' })
+  } catch (error) {
+    console.error('Error removing labels:', error)
+    return NextResponse.json(
+      { error: 'Failed to remove labels' },
+      { status: 500 }
+    )
+  }
+}
+5.8 Get Messages by Custom Label (app/api/custom-labels/[labelId]/messages/route.ts)
+typescriptimport { NextRequest, NextResponse } from 'next/server'
+import { supabase } from '@/lib/supabase'
+import { nylas } from '@/lib/nylas'
+
+export async function GET(
+  request: NextRequest,
+  { params }: { params: { labelId: string } }
+) {
+  const { searchParams } = new URL(request.url)
+  const userId = searchParams.get('userId')
+  const limit = parseInt(searchParams.get('limit') || '50')
+  const offset = parseInt(searchParams.get('offset') || '0')
+
+  if (!userId) {
+    return NextResponse.json({ error: 'User ID required' }, { status: 400 })
+  }
+
+  try {
+    // Get message IDs with this label
+    const { data: labeledMessages, error } = await supabase
+      .from('message_custom_labels')
+      .select(`
+        message_id,
+        email_account_id,
+        email_accounts!inner(
+          user_id,
+          grant_id,
+          email,
+          provider
+        )
+      `)
+      .eq('custom_label_id', params.labelId)
+      .eq('email_accounts.user_id', userId)
+      .range(offset, offset + limit - 1)
+      .order('applied_at', { ascending: false })
+
+    if (error) throw error
+
+    // Fetch actual messages from Nylas
+    const messages = await Promise.all(
+      labeledMessages.map(async (item: any) => {
+        try {
+          const message = await nylas.messages.find({
+            identifier: item.email_accounts.grant_id,
+            messageId: item.message_id
+          })
+
+          // Get all custom labels for this message
+          const { data: allLabels } = await supabase
+            .from('message_custom_labels')
+            .select(`
+              custom_labels (
+                id,
+                name,
+                color
+              )
+            `)
+            .eq('email_account_id', item.email_account_id)
+            .eq('message_id', item.message_id)
+
+          return {
+            ...message.data,
+            account_email: item.email_accounts.email,
+            account_provider: item.email_accounts.provider,
+            account_id: item.email_account_id,
+            custom_labels: allLabels?.map(l => l.custom_labels) || []
+          }
+        } catch (err) {
+          console.error(`Error fetching message ${item.message_id}:`, err)
+          return null
+        }
+      })
+    )
+
+    const validMessages = messages.filter(m => m !== null)
+
+    return NextResponse.json({ 
+      data: validMessages, 
+      total: validMessages.length,
+      offset,
+      limit 
+    })
+  } catch (error) {
+    console.error('Error fetching messages by label:', error)
+    return NextResponse.json(
+      { error: 'Failed to fetch messages' },
+      { status: 500 }
+    )
+  }
+}
+5.9 Send Email (app/api/emails/[accountId]/send/route.ts)
+typescriptimport { NextRequest, NextResponse } from 'next/server'
+import { supabase } from '@/lib/supabase'
+import { nylas } from '@/lib/nylas'
+
+export async function POST(
+  request: NextRequest,
+  { params }: { params: { accountId: string } }
+) {
+  try {
+    const body = await request.json()
+    const { to, subject, body: emailBody, cc, bcc, replyToMessageId, attachments } = body
+
+    if (!to || !subject || !emailBody) {
+      return NextResponse.json(
+        { error: 'Missing required fields: to, subject, body' },
+        { status: 400 }
+      )
+    }
+
+    const { data: account, error: accountError } = await supabase
+      .from('email_accounts')
+      .select('grant_id, email')
+      .eq('id', params.accountId)
+      .single()
+
+    if (accountError) throw accountError
+
+    const requestBody: any = {
+      subject,
+      body: emailBody
+    }
+
+    // Handle recipients
+    requestBody.to = Array.isArray(to) 
+      ? to.map((email: string) => ({ email })) 
+      : [{ email: to }]
+
+    if (cc) {
+      requestBody.cc = Array.isArray(cc)
+        ? cc.map((email: string) => ({ email }))
+        : [{ email: cc }]
+    }
+
+    if (bcc) {
+      requestBody.bcc = Array.isArray(bcc)
+        ? bcc.map((email: string) => ({ email }))
+        : [{ email: bcc }]
+    }
+
+    // Handle reply
+    if (replyToMessageId) {
+      requestBody.reply_to_message_id = replyToMessageId
+    }
+
+    // Handle attachments
+    if (attachments && Array.isArray(attachments)) {
+      requestBody.attachments = attachments
+    }
+
+    const sentMessage = await nylas.messages.send({
+      identifier: account.grant_id,
+      requestBody
+    })
+
+    return NextResponse.json({ 
+      message: sentMessage,
+      success: true,
+      info: `Email sent from ${account.email}`
+    })
+  } catch (error) {
+    console.error('Error sending email:', error)
+    return NextResponse.json(
+      { error: 'Failed to send email' },
+      { status: 500 }
+    )
+  }
+}
+5.10 Smart Compose with AI (app/api/emails/[accountId]/compose/route.ts)
+typescriptimport { NextRequest, NextResponse } from 'next/server'
+import { supabase } from '@/lib/supabase'
+import { nylas } from '@/lib/nylas'
+
+export async function POST(
+  request: NextRequest,
+  { params }: { params: { accountId: string } }
+) {
+  try {
+    const { prompt } = await request.json()
+
+    if (!prompt) {
+      return NextResponse.json(
+        { error: 'Prompt is required' },
+        { status: 400 }
+      )
+    }
+
+    const { data: account } = await supabase
+      .from('email_accounts')
+      .select('grant_id')
+      .eq('id', params.accountId)
+      .single()
+
+    const message = await nylas.messages.smartCompose.composeMessage({
+      identifier: account.grant_id,
+      requestBody: { prompt }
+    })
+
+    return NextResponse.json({ 
+      message,
+      success: true 
+    })
+  } catch (error) {
+    console.error('Error composing message:', error)
+    return NextResponse.json(
+      { error: 'Failed to compose message with AI' },
+      { status: 500 }
+    )
+  }
+}
+5.11 Smart Reply with AI (app/api/emails/[accountId]/messages/[messageId]/reply/route.ts)
+typescriptimport { NextRequest, NextResponse } from 'next/server'
+import { supabase } from '@/lib/supabase'
+
+export async function POST(
+  request: NextRequest,
+  { params }: { params: { accountId: string; messageId: string } }
+) {
+  try {
+    const { prompt } = await request.json()
+
+    if (!prompt) {
+      return NextResponse.json(
+        { error: 'Prompt is required' },
+        { status: 400 }
+      )
+    }
+
+    const { data: account } = await supabase
+      .from('email_accounts')
+      .select('grant_id')
+      .eq('id', params.accountId)
+      .single()
+
+    // Call Nylas Smart Compose for reply
+    const response = await fetch(
+      `${process.env.NYLAS_API_URI}/v3/grants/${account.grant_id}/messages/${params.messageId}/smart-compose`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${process.env.NYLAS_API_KEY}`
+        },
+        body: JSON.stringify({ prompt })
+      }
+    )
+
+    if (!response.ok) {
+      throw new Error('Failed to generate reply')
+    }
+
+    const reply = await response.json()
+    
+    return NextResponse.json({ 
+      reply,
+      success: true 
+    })
+  } catch (error) {
+    console.error('Error generating reply:', error)
+    return NextResponse.json(
+      { error: 'Failed to generate reply with AI' },
+      { status: 500 }
+    )
+  }
+}
+5.12 Folders Management (app/api/emails/[accountId]/folders/route.ts)
+typescriptimport { NextRequest, NextResponse } from 'next/server'
+import { supabase } from '@/lib/supabase'
+import { nylas } from '@/lib/nylas'
+
+export async function GET(
+  request: NextRequest,
+  { params }: { params: { accountId: string } }
+) {
+  try {
+    const { data: account } = await supabase
+      .from('email_accounts')
+      .select('grant_id')
+      .eq('id', params.accountId)
+      .single()
+
+    const folders = await nylas.folders.list({
+      identifier: account.grant_id,
+      queryParams: { limit: 100 }
+    })
+
+    return NextResponse.json({ folders: folders.data })
+  } catch (error) {
+    console.error('Error fetching folders:', error)
+    return NextResponse.json(
+      { error: 'Failed to fetch folders' },
+      { status: 500 }
+    )
+  }
+}
+

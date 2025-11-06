@@ -1,0 +1,502 @@
+export async function POST(
+  request: NextRequest,
+  { params }: { params: { accountId: string } }
+) {
+  try {
+    const body = await request.json()
+    const { name, text_color, background_color, parent_id } = body
+
+    if (!name) {
+      return NextResponse.json(
+        { error: 'Folder name is required' },
+        { status: 400 }
+      )
+    }
+
+    const { data: account } = await supabase
+      .from('email_accounts')
+      .select('grant_id, provider')
+      .eq('id', params.accountId)
+      .single()
+
+    const requestBody: any = { name }
+    
+    // Google-specific: text and background colors
+    if (account.provider === 'google') {
+      if (text_color) requestBody.text_color = text_color
+      if (background_color) requestBody.background_color = background_color
+    }
+
+    // Microsoft/EWS: parent folder for nested structure
+    if ((account.provider === 'microsoft' || account.provider === 'ews') && parent_id) {
+      requestBody.parent_id = parent_id
+    }
+
+    const folder = await nylas.folders.create({
+      identifier: account.grant_id,
+      requestBody
+    })
+
+    return NextResponse.json({ folder, success: true })
+  } catch (error) {
+    console.error('Error creating folder:', error)
+    return NextResponse.json(
+      { error: 'Failed to create folder' },
+      { status: 500 }
+    )
+  }
+}
+5.13 Drafts Management (app/api/emails/[accountId]/drafts/route.ts)
+typescriptimport { NextRequest, NextResponse } from 'next/server'
+import { supabase } from '@/lib/supabase'
+import { nylas } from '@/lib/nylas'
+
+export async function GET(
+  request: NextRequest,
+  { params }: { params: { accountId: string } }
+) {
+  try {
+    const { searchParams } = new URL(request.url)
+    const limit = parseInt(searchParams.get('limit') || '50')
+
+    const { data: account } = await supabase
+      .from('email_accounts')
+      .select('grant_id')
+      .eq('id', params.accountId)
+      .single()
+
+    const drafts = await nylas.drafts.list({
+      identifier: account.grant_id,
+      queryParams: { limit }
+    })
+
+    return NextResponse.json({ drafts: drafts.data })
+  } catch (error) {
+    console.error('Error fetching drafts:', error)
+    return NextResponse.json(
+      { error: 'Failed to fetch drafts' },
+      { status: 500 }
+    )
+  }
+}
+
+export async function POST(
+  request: NextRequest,
+  { params }: { params: { accountId: string } }
+) {
+  try {
+    const body = await request.json()
+    const { to, subject, body: emailBody, cc, bcc } = body
+
+    const { data: account } = await supabase
+      .from('email_accounts')
+      .select('grant_id')
+      .eq('id', params.accountId)
+      .single()
+
+    const requestBody: any = {
+      subject,
+      body: emailBody
+    }
+
+    if (to) {
+      requestBody.to = Array.isArray(to) 
+        ? to.map((e: string) => ({ email: e })) 
+        : [{ email: to }]
+    }
+
+    if (cc) {
+      requestBody.cc = Array.isArray(cc)
+        ? cc.map((e: string) => ({ email: e }))
+        : [{ email: cc }]
+    }
+
+    if (bcc) {
+      requestBody.bcc = Array.isArray(bcc)
+        ? bcc.map((e: string) => ({ email: e }))
+        : [{ email: bcc }]
+    }
+
+    const draft = await nylas.drafts.create({
+      identifier: account.grant_id,
+      requestBody
+    })
+
+    return NextResponse.json({ draft, success: true })
+  } catch (error) {
+    console.error('Error creating draft:', error)
+    return NextResponse.json(
+      { error: 'Failed to create draft' },
+      { status: 500 }
+    )
+  }
+}
+5.14 Send Draft (app/api/emails/[accountId]/drafts/[draftId]/send/route.ts)
+typescriptimport { NextRequest, NextResponse } from 'next/server'
+import { supabase } from '@/lib/supabase'
+import { nylas } from '@/lib/nylas'
+
+export async function POST(
+  request: NextRequest,
+  { params }: { params: { accountId: string; draftId: string } }
+) {
+  try {
+    const { data: account } = await supabase
+      .from('email_accounts')
+      .select('grant_id')
+      .eq('id', params.accountId)
+      .single()
+
+    const sentMessage = await nylas.drafts.send({
+      identifier: account.grant_id,
+      draftId: params.draftId
+    })
+
+    return NextResponse.json({ 
+      message: sentMessage,
+      success: true 
+    })
+  } catch (error) {
+    console.error('Error sending draft:', error)
+    return NextResponse.json(
+      { error: 'Failed to send draft' },
+      { status: 500 }
+    )
+  }
+}
+5.15 Threads Management (app/api/emails/[accountId]/threads/route.ts)
+typescriptimport { NextRequest, NextResponse } from 'next/server'
+import { supabase } from '@/lib/supabase'
+import { nylas } from '@/lib/nylas'
+
+export async function GET(
+  request: NextRequest,
+  { params }: { params: { accountId: string } }
+) {
+  try {
+    const { searchParams } = new URL(request.url)
+    const limit = parseInt(searchParams.get('limit') || '50')
+    const unread = searchParams.get('unread')
+    const starred = searchParams.get('starred')
+
+    const { data: account } = await supabase
+      .from('email_accounts')
+      .select('grant_id')
+      .eq('id', params.accountId)
+      .single()
+
+    const queryParams: any = { limit }
+    
+    if (unread !== null) queryParams.unread = unread === 'true'
+    if (starred !== null) queryParams.starred = starred === 'true'
+
+    const threads = await nylas.threads.list({
+      identifier: account.grant_id,
+      queryParams
+    })
+
+    return NextResponse.json({ threads: threads.data })
+  } catch (error) {
+    console.error('Error fetching threads:', error)
+    return NextResponse.json(
+      { error: 'Failed to fetch threads' },
+      { status: 500 }
+    )
+  }
+}
+
+🎨 Phase 6: Frontend Components
+6.1 Connect Account Button (components/ConnectAccountButton.tsx)
+typescript'use client'
+
+import { useState } from 'react'
+import { Button } from '@/components/ui/button'
+import { Mail, Loader2 } from 'lucide-react'
+
+interface Props {
+  provider: 'google' | 'microsoft' | 'yahoo' | 'imap'
+  userId: string
+  disabled?: boolean
+}
+
+const providerConfig = {
+  google: { name: 'Gmail', icon: '📧', color: 'bg-red-500 hover:bg-red-600' },
+  microsoft: { name: 'Outlook', icon: '📬', color: 'bg-blue-500 hover:bg-blue-600' },
+  yahoo: { name: 'Yahoo', icon: '📮', color: 'bg-purple-500 hover:bg-purple-600' },
+  imap: { name: 'IMAP', icon: '📫', color: 'bg-gray-500 hover:bg-gray-600' }
+}
+
+export function ConnectAccountButton({ provider, userId, disabled }: Props) {
+  const [loading, setLoading] = useState(false)
+  const config = providerConfig[provider]
+
+  const handleConnect = () => {
+    setLoading(true)
+    window.location.href = `/api/auth/${provider}?userId=${userId}`
+  }
+
+  return (
+    <Button
+      onClick={handleConnect}
+      disabled={loading || disabled}
+      className={`w-full ${config.color} text-white`}
+    >
+      {loading ? (
+        <>
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          Connecting...
+        </>
+      ) : (
+        <>
+          <span className="mr-2">{config.icon}</span>
+          Connect {config.name}
+        </>
+      )}
+    </Button>
+  )
+}
+6.2 Custom Label Badge (components/CustomLabelBadge.tsx)
+typescript'use client'
+
+import { X } from 'lucide-react'
+import { CustomLabel } from '@/types/email'
+
+interface Props {
+  label: CustomLabel
+  removable?: boolean
+  onRemove?: () => void
+  size?: 'sm' | 'md' | 'lg'
+}
+
+export function CustomLabelBadge({ label, removable, onRemove, size = 'md' }: Props) {
+  const sizeClasses = {
+    sm: 'text-xs px-2 py-0.5',
+    md: 'text-sm px-2.5 py-1',
+    lg: 'text-base px-3 py-1.5'
+  }
+
+  return (
+    <span
+      className={`inline-flex items-center rounded-full font-medium ${sizeClasses[size]}`}
+      style={{ 
+        backgroundColor: label.color + '20',
+        color: label.color,
+        border: `1px solid ${label.color}40`
+      }}
+    >
+      {label.name}
+      {removable && onRemove && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onRemove()
+          }}
+          className="ml-1 hover:opacity-70"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      )}
+    </span>
+  )
+}
+6.3 Label Selector (components/LabelSelector.tsx)
+typescript'use client'
+
+import { useState, useEffect } from 'react'
+import { Check } from 'lucide-react'
+import { CustomLabel } from '@/types/email'
+import { CustomLabelBadge } from './CustomLabelBadge'
+
+interface Props {
+  accountId: string
+  messageId: string
+  currentLabels: CustomLabel[]
+  userId: string
+  onLabelsChange: (labels: CustomLabel[]) => void
+}
+
+export function LabelSelector({ accountId, messageId, currentLabels, userId, onLabelsChange }: Props) {
+  const [allLabels, setAllLabels] = useState<CustomLabel[]>([])
+  const [selectedLabelIds, setSelectedLabelIds] = useState<Set<string>>(new Set())
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    fetchAllLabels()
+    setSelectedLabelIds(new Set(currentLabels.map(l => l.id)))
+  }, [currentLabels])
+
+  const fetchAllLabels = async () => {
+    try {
+      const response = await fetch('/api/custom-labels')
+      const data = await response.json()
+      setAllLabels(data.labels || [])
+    } catch (error) {
+      console.error('Failed to fetch labels:', error)
+    }
+  }
+
+  const toggleLabel = async (labelId: string) => {
+    setLoading(true)
+    try {
+      const isSelected = selectedLabelIds.has(labelId)
+      
+      if (isSelected) {
+        // Remove label
+        await fetch(
+          `/api/emails/${accountId}/messages/${messageId}/labels?labelId=${labelId}`,
+          { method: 'DELETE' }
+        )
+        const newIds = new Set(selectedLabelIds)
+        newIds.delete(labelId)
+        setSelectedLabelIds(newIds)
+      } else {
+        // Add label
+        await fetch(
+          `/api/emails/${accountId}/messages/${messageId}/labels`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ label_ids: [labelId], userId })
+          }
+        )
+        setSelectedLabelIds(new Set([...selectedLabelIds, labelId]))
+      }
+
+      // Fetch updated labels
+      const response = await fetch(
+        `/api/emails/${accountId}/messages/${messageId}/labels`
+      )
+      const data = await response.json()
+      onLabelsChange(data.labels || [])
+    } catch (error) {
+      console.error('Failed to toggle label:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="text-sm font-medium">Apply Labels</div>
+      <div className="space-y-1">
+        {allLabels.map((label) => (
+          <button
+            key={label.id}
+            onClick={() => toggleLabel(label.id)}
+            disabled={loading}
+            className="w-full flex items-center justify-between p-2 rounded hover:bg-accent transition-colors"
+          >
+            <CustomLabelBadge label={label} size="sm" />
+            {selectedLabelIds.has(label.id) && (
+              <Check className="h-4 w-4 text-primary" />
+            )}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+6.4 Email List Item (components/EmailListItem.tsx)
+typescript'use client'
+
+import { formatDistanceToNow } from 'date-fns'
+import { Mail, Star, Paperclip } from 'lucide-react'
+import { CustomLabelBadge } from './CustomLabelBadge'
+
+interface Message {
+  id: string
+  subject: string
+  from: { email: string; name?: string }[]
+  snippet: string
+  date: number
+  unread: boolean
+  starred: boolean
+  has_attachments?: boolean
+  account_email: string
+  account_provider: string
+  custom_labels?: any[]
+}
+
+interface Props {
+  message: Message
+  onClick: () => void
+}
+onClick={onClick}
+      className={`
+        p-4 cursor-pointer hover:bg-accent transition-colors border-b
+        ${message.unread ? 'bg-accent/50' : 'bg-background'}
+      `}
+    >
+      <div className="flex items-start gap-3">
+        {/* Star */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            // Handle star toggle
+          }}
+          className="mt-1"
+        >
+          <Star
+            className={`h-4 w-4 ${
+              message.starred
+                ? 'fill-yellow-400 text-yellow-400'
+                : 'text-muted-foreground'
+            }`}
+          />
+        </button>
+
+        {/* Email Content */}
+        <div className="flex-1 min-w-0">
+          {/* From & Time */}
+          <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className={`font-medium truncate ${message.unread ? 'font-bold' : ''}`}>
+                {message.from[0]?.name || message.from[0]?.email}
+              </span>
+              {message.unread && (
+                <span className="h-2 w-2 rounded-full bg-primary flex-shrink-0" />
+              )}
+            </div>
+            <span className="text-xs text-muted-foreground ml-2 flex-shrink-0">
+              {formatDistanceToNow(new Date(message.date * 1000), { addSuffix: true })}
+            </span>
+          </div>
+
+          {/* Subject */}
+          <div className={`text-sm mb-1 truncate ${message.unread ? 'font-semibold' : ''}`}>
+            {message.subject || '(No Subject)'}
+          </div>
+
+          {/* Snippet */}
+          <div className="text-sm text-muted-foreground truncate mb-2">
+            {message.snippet}
+          </div>
+
+          {/* Custom Labels & Attachments */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {message.custom_labels && message.custom_labels.length > 0 && (
+              <div className="flex gap-1 flex-wrap">
+                {message.custom_labels.map((label) => (
+                  <CustomLabelBadge key={label.id} label={label} size="sm" />
+                ))}
+              </div>
+            )}
+            {message.has_attachments && (
+              <span className="inline-flex items-center text-xs text-muted-foreground">
+                <Paperclip className="h-3 w-3 mr-1" />
+                Attachment
+              </span>
+            )}
+          </div>
+
+          {/* Account Badge */}
+          <div className="mt-2">
+            <span className="text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground">
+              {message.account_email}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
