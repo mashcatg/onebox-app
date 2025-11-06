@@ -1,39 +1,27 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Mail } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { supabase } from '@/lib/supabase'
+import { useAuth } from '@/components/auth-provider'
 
 export default function SignInPage() {
   const router = useRouter()
+  const { user, loading: authLoading } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const handleSignIn = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError(null)
-    setLoading(true)
-
-    try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      })
-
-      if (error) throw error
-
-      router.push('/login')
-    } catch (error) {
-      setError(error instanceof Error ? error.message : 'Failed to sign in')
-    } finally {
-      setLoading(false)
+  // Redirect if already authenticated
+  useEffect(() => {
+    if (!authLoading && user) {
+      router.replace('/dashboard')
     }
-  }
+  }, [user, authLoading, router])
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -57,6 +45,78 @@ export default function SignInPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleSignIn = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError(null)
+    setLoading(true)
+
+    try {
+      console.log('Attempting sign in...')
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
+
+      if (error) throw error
+
+      console.log('Sign in successful:', data.session?.user?.id)
+      
+      // Store the session explicitly
+      await supabase.auth.setSession({
+        access_token: data.session!.access_token,
+        refresh_token: data.session!.refresh_token,
+      })
+
+      // Ensure the session is properly stored
+      await new Promise(resolve => setTimeout(resolve, 1000))
+
+      try {
+        // Fetch accounts with cache-busting headers
+        const accountsResponse = await fetch('/api/accounts', {
+          headers: {
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0'
+          }
+        })
+
+        if (!accountsResponse.ok) {
+          throw new Error('Failed to fetch accounts')
+        }
+
+        const accounts = await accountsResponse.json()
+
+        // Redirect based on whether user has connected accounts
+        const destination = accounts && accounts.length > 0 ? '/dashboard' : '/login'
+        console.log('Redirecting to:', destination)
+        
+        // Force a complete page reload with the new session
+        window.location.replace(destination)
+      } catch (accountError) {
+        console.error('Account fetch error:', accountError)
+        window.location.replace('/login')
+      }
+    } catch (error) {
+      console.error('Sign in error:', error)
+      setError(error instanceof Error ? error.message : 'Failed to sign in')
+      setLoading(false)
+    }
+  }
+
+  // Show loading state while checking auth
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <p>Loading...</p>
+      </div>
+    )
+  }
+
+  // Don't show the form if user is already authenticated
+  if (user) {
+    return null
   }
 
   return (

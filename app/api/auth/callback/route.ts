@@ -166,13 +166,10 @@ export async function GET(request: NextRequest) {
 
     console.log('Account saved successfully')
 
-    // Success - redirect to dashboard
-    const successUrl = new URL('/dashboard', request.url)
-    successUrl.searchParams.set('success', 'account_connected')
-    successUrl.searchParams.set('email', tokenData.email)
-    
-    console.log('Redirecting to:', successUrl.toString())
-    return NextResponse.redirect(successUrl)
+    // Success - redirect to dashboard with query params
+    const redirectPath = `/dashboard?success=account_connected&email=${encodeURIComponent(tokenData.email)}`
+    console.log('Redirecting to:', redirectPath)
+    return NextResponse.redirect(new URL(redirectPath, request.url))
 
   } catch (error) {
     console.error('Callback error:', error)

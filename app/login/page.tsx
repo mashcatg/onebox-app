@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Mail, CheckCircle, ChevronRight, Sparkles, InboxIcon, Tags } from 'lucide-react'
+import { Mail, CheckCircle, ChevronRight, Sparkles, InboxIcon, Tags, LogOut } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { FeatureCard } from '@/components/ui/feature-card'
 import { ConnectAccountButton } from '@/components/ConnectAccountButton'
 import { supabase } from '@/lib/supabase'
@@ -20,7 +21,7 @@ export default function LoginPage() {
         setUserId(session.user.id)
       } else {
         // If no session, redirect to sign in
-        router.push('/auth/signin')
+        router.replace('/auth/signin')
       }
     }
     checkUser()
@@ -96,6 +97,20 @@ export default function LoginPage() {
       <div className="flex-1 flex items-center justify-center p-6">
         <div className="w-full max-w-md">
           <div className="text-center mb-8">
+            <div className="flex justify-end mb-4">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={async () => {
+                  await supabase.auth.signOut()
+                  router.replace('/auth/signin')
+                }}
+                className="text-muted-foreground hover:text-destructive flex items-center gap-2"
+              >
+                <LogOut className="w-4 h-4" />
+                Switch account
+              </Button>
+            </div>
             <h2 className="text-2xl font-bold text-foreground mb-2">
               Welcome to Onebox
             </h2>

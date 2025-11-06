@@ -41,7 +41,9 @@ export async function POST(request: NextRequest) {
     const { grant_id: grantId, email } = data
 
     // Create Supabase client with cookies
-    const supabase = createRouteHandlerClient({ cookies })
+    const supabase = createRouteHandlerClient({ 
+      cookies: () => cookies()
+    })
 
     // Store the account in the database
     const { data: account, error: accountError } = await supabase

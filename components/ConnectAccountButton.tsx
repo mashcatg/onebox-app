@@ -107,14 +107,14 @@ export function ConnectAccountButton({ provider, userId, disabled }: Props) {
         throw new Error('No authentication URL returned')
       }
       
-      // Store the current URL to return to after auth
-      sessionStorage.setItem('authReturnTo', window.location.pathname)
+      // Store the dashboard URL to return to after auth
+      sessionStorage.setItem('authReturnTo', '/dashboard')
       
       // Log the URL we're redirecting to (for debugging)
       console.log('Redirecting to:', data.url)
       
-      // Redirect to the OAuth URL
-      window.location.href = data.url
+      // Use window.location.replace to prevent breaking the history
+      window.location.replace(data.url)
     } catch (error) {
       console.error('Error connecting account:', error)
       alert(error instanceof Error ? error.message : 'Failed to connect account. Please try again.')
